@@ -1,0 +1,237 @@
+# Ajuste no fluxo de geração de notícias — fallback para mínimo de 7 notícias
+
+## Contexto
+
+O fluxo de geração de notícias já está implementado e funcionando.
+
+Atualmente o processo:
+
+1. Busca notícias via RSS.
+2. Executa a curadoria utilizando IA.
+3. Gera o JSON final com as notícias selecionadas.
+4. Salva uma versão histórica diária no S3.
+5. Atualiza o arquivo `latest.json`, que é consumido pelo ticker do front-end.
+
+Já existe uma estrutura de histórico com os JSONs gerados nos dias anteriores.
+
+## Objetivo do ajuste
+
+Adicionar uma regra para garantir que o `latest.json` tenha **no mínimo 7 notícias**, sempre que houver notícias históricas disponíveis para completar essa quantidade.
+
+Não alterar o restante do fluxo existente.
+
+## Regra de negócio
+
+Após a curadoria da IA e antes de salvar o `latest.json`, verificar quantas notícias foram selecionadas no processamento atual.
+
+### Cenário 1 — Foram geradas 7 ou mais notícias
+
+Se o JSON do processamento atual possuir **7 ou mais notícias**:
+
+* manter o comportamento atual;
+* não buscar notícias do histórico;
+* salvar normalmente o resultado atual no `latest.json`;
+* manter o salvamento histórico existente.
+
+Exemplo:
+
+```text
+Notícias de hoje: 9
+Resultado final: 9 notícias de hoje
+Fallback: não necessário
+```
+
+### Cenário 2 — Foram geradas menos de 7 notícias
+
+Se o processamento atual possuir **menos de 7 notícias**:
+
+1. Calcular quantas notícias faltam para atingir 7.
+2. Buscar o JSON histórico referente ao dia anterior.
+3. Selecionar do histórico apenas a quantidade necessária para completar 7 notícias.
+4. Não adicionar notícias duplicadas.
+5. Adicionar as notícias históricas **depois das notícias do processamento atual**.
+6. Gerar o `latest.json` com o resultado combinado.
+
+Exemplo:
+
+```text
+Notícias de hoje: 5
+Mínimo necessário: 7
+Quantidade faltante: 2
+
+Buscar 2 notícias válidas do JSON do dia anterior.
+
+Resultado:
+
+5 notícias de hoje
++
+2 notícias do dia anterior
+=
+7 notícias no latest.json
+```
+
+Outro exemplo:
+
+```text
+Notícias de hoje: 3
+Quantidade faltante: 4
+
+Resultado:
+
+3 notícias de hoje
++
+4 notícias do dia anterior
+=
+7 notícias
+```
+
+## Prioridade das notícias
+
+As notícias do processamento atual devem sempre ter prioridade.
+
+O fallback histórico serve apenas para completar a quantidade mínima.
+
+Portanto, a ordem do array final deve ser:
+
+```text
+[notícias de hoje] + [notícias recuperadas do histórico]
+```
+
+Não remover nem substituir notícias atuais por notícias antigas.
+
+## Tratamento de duplicidade
+
+Antes de adicionar uma notícia histórica ao resultado, verificar se ela já existe entre as notícias atuais.
+
+Utilizar preferencialmente a `url` como chave de comparação.
+
+Caso o modelo atual possua algum identificador único confiável, ele também pode ser utilizado.
+
+Exemplo:
+
+```text
+currentNews.url === historicalNews.url
+```
+
+Uma notícia duplicada deve ser ignorada e a próxima notícia válida do histórico deve ser considerada.
+
+## Caso o dia anterior também não tenha notícias suficientes
+
+O primeiro fallback deve ser o JSON do dia anterior.
+
+Se mesmo após consultar o dia anterior não for possível atingir 7 notícias, **não inventar notícias e não chamar novamente a IA apenas para completar quantidade**.
+
+Nesse caso, manter todas as notícias válidas encontradas.
+
+Exemplo:
+
+```text
+Hoje: 4 notícias
+Ontem: apenas 2 notícias válidas e não duplicadas
+
+Resultado final: 6 notícias
+```
+
+Não gerar conteúdo artificial apenas para atingir 7.
+
+## Histórico diário
+
+Importante: preservar o comportamento atual de armazenamento histórico.
+
+O JSON histórico referente ao processamento atual deve continuar representando o resultado gerado no dia conforme a arquitetura existente.
+
+Não alterar nomes de buckets, paths, contratos JSON ou estrutura existente sem necessidade.
+
+## latest.json
+
+O `latest.json` deve representar o conteúdo efetivamente utilizado pelo ticker.
+
+Portanto:
+
+```text
+se notícias atuais >= 7:
+    latest = notícias atuais
+
+se notícias atuais < 7:
+    latest = notícias atuais + fallback do dia anterior
+```
+
+## Implementação
+
+Antes de desenvolver:
+
+1. Analise o fluxo atual de geração e persistência das notícias.
+2. Identifique onde o JSON resultante da curadoria é criado.
+3. Identifique onde o histórico diário é salvo.
+4. Identifique onde o `latest.json` é salvo.
+5. Adicione a nova lógica no ponto mais adequado, evitando alterações desnecessárias na arquitetura existente.
+
+Preferir criar uma função isolada para essa responsabilidade, por exemplo:
+
+```text
+ensureMinimumNews(...)
+```
+
+ou nome equivalente seguindo o padrão já utilizado no projeto.
+
+Responsabilidades esperadas dessa função:
+
+```text
+receber notícias atuais
+↓
+verificar quantidade
+↓
+se >= 7
+    retornar sem alteração
+↓
+se < 7
+    buscar histórico do dia anterior
+↓
+remover duplicadas
+↓
+pegar somente quantidade necessária
+↓
+retornar lista combinada
+```
+
+## Requisitos importantes
+
+* Não refatorar partes não relacionadas.
+* Não alterar o prompt de curadoria da IA.
+* Não alterar a busca RSS.
+* Não alterar contratos existentes sem necessidade.
+* Não alterar a estrutura atual do JSON.
+* Não alterar o funcionamento atual quando existirem 7 ou mais notícias.
+* Reaproveitar os serviços/utilitários S3 já existentes no projeto.
+* Manter tratamento de erros e logging seguindo o padrão atual.
+* Não duplicar código de acesso ao S3 se já existir uma abstração para isso.
+
+## Resultado esperado
+
+A alteração deve ser pequena e incremental sobre a implementação atual.
+
+O objetivo é somente garantir este comportamento:
+
+```text
+                    Notícias após curadoria
+                             |
+                             v
+                     Quantidade >= 7?
+                       /           \
+                     SIM           NÃO
+                      |              |
+                      |        Calcula faltantes
+                      |              |
+                      |        Busca JSON de ontem
+                      |              |
+                      |        Remove duplicadas
+                      |              |
+                      |        Completa até 7
+                      |              |
+                      +-------+------+
+                              |
+                              v
+                         latest.json
+```
+
+Antes de alterar o código, apresente quais arquivos serão modificados e explique brevemente onde a nova regra será encaixada no fluxo atual. Depois implemente apenas as mudanças necessárias.
