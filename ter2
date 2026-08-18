@@ -787,35 +787,64 @@ Não é necessário salvar os e-mails.
 
 # 17. Permissões Microsoft Graph
 
-Utilizar permissão **delegated**.
+Para esta POC, considerar que o **App Registration identificado pelo `AZURE_CLIENT_ID` já está previamente configurado no Microsoft Entra ID** com as permissões necessárias para acesso ao Microsoft Graph.
 
-Para a POC:
+A permissão delegada necessária para consulta dos e-mails é:
 
 ```text
 Mail.Read
 ```
 
-Também configurar todas as permissões necessárias ao fluxo de autenticação e consentimento utilizado pela aplicação.
+Também considerar que o consentimento necessário para essa permissão já foi realizado no ambiente.
 
-O objetivo é que o token final para Graph tenha permissão suficiente para executar:
+Portanto, **não faz parte do escopo da POC criar ou configurar permissões no App Registration**.
 
-```http
+A aplicação deve apenas solicitar o scope correspondente ao Microsoft Graph durante a aquisição do token pelo MSAL:
+
+```python
+GRAPH_SCOPES = [
+    "https://graph.microsoft.com/Mail.Read"
+]
+```
+
+O fluxo esperado é:
+
+```text
+CLIENT_ID
+   │
+   │ App Registration já configurado
+   │ com Mail.Read (Delegated)
+   ▼
+MSAL
+   │
+   │ solicita token para
+   │ https://graph.microsoft.com/Mail.Read
+   ▼
+Microsoft Entra ID
+   │
+   ▼
+Access Token Graph
+   │
+   ▼
 GET /me/messages
 ```
+
+O token obtido pelo fluxo OBO deve possuir permissão suficiente para realizar:
+
+```http
+GET https://graph.microsoft.com/v1.0/me/messages
+```
+
+Não é necessário implementar configuração de permissões ou consentimento dentro da POC.
+
+Caso a aquisição do token retorne erro relacionado a consentimento ou permissão, apenas registrar o erro adequadamente e documentar que a configuração deverá ser verificada no App Registration.
+
 
 ---
 
 # 18. App Registration
 
 Considerar que existe uma App Registration no Microsoft Entra ID.
-
-A Lambda deverá receber:
-
-```text
-TENANT_ID
-CLIENT_ID
-CLIENT_SECRET
-```
 
 Configuração:
 
@@ -833,7 +862,7 @@ GRAPH_SCOPES = [
 
 O Claude Code não deve deixar:
 
-* client secret
+* clients
 * password
 * connection string
 
@@ -846,10 +875,6 @@ hardcoded.
 Implementar suporte às seguintes variáveis:
 
 ```text
-AZURE_TENANT_ID
-AZURE_CLIENT_ID
-AZURE_CLIENT_SECRET
-
 REDIS_HOST
 REDIS_PORT
 REDIS_PASSWORD
