@@ -1,0 +1,1815 @@
+# PRD — POC MSAL Token Cache + Redis + Microsoft Graph em AWS Lambda
+
+## 1. Objetivo
+
+Desenvolver uma **POC simples** para validar a persistência e reutilização do **MSAL Token Cache utilizando Redis**, permitindo que uma AWS Lambda em Python consiga posteriormente obter um Access Token do Microsoft Graph **sem precisar receber novamente um token do usuário**.
+
+A POC deve validar o seguinte cenário:
+
+```text
+Usuário autenticado
+      ↓
+Access Token recebido pela Lambda
+      ↓
+MSAL / OBO
+      ↓
+Token Cache do MSAL
+      ↓
+Serialização do cache
+      ↓
+Redis
+      ↓
+Execução posterior
+      ↓
+Carrega cache do Redis
+      ↓
+MSAL
+      ↓
+Access Token válido
+      ↓
+Microsoft Graph
+      ↓
+Consulta 10 e-mails
+```
+
+O principal objetivo não é implementar sincronização de e-mails completa.
+
+O objetivo é comprovar tecnicamente que:
+
+1. Um usuário autenticado pode iniciar o fluxo.
+2. A Lambda consegue executar autenticação delegada utilizando MSAL.
+3. O token cache gerado pelo MSAL pode ser serializado.
+4. Esse cache pode ser salvo no Redis.
+5. Em uma execução posterior da Lambda, o cache pode ser recuperado.
+6. O MSAL consegue reutilizar o conteúdo desse cache.
+7. Caso necessário, o MSAL utiliza internamente o Refresh Token existente no cache para conseguir um novo Access Token.
+8. O Access Token obtido pelo MSAL pode ser utilizado para chamar o Microsoft Graph.
+9. A chamada deve retornar os últimos 10 e-mails do usuário.
+
+---
+
+# 2. Escopo da POC
+
+A POC deve conter apenas:
+
+* AWS Lambda
+* Python
+* MSAL Python
+* Redis
+* Microsoft Entra ID
+* Microsoft Graph API
+* chamada simples HTTP para a Microsoft Graph
+* persistência do MSAL Token Cache
+* recuperação do MSAL Token Cache
+* consulta de 10 e-mails
+
+Não adicionar:
+
+* SQS
+* SNS
+* EventBridge
+* Step Functions
+* DynamoDB
+* S3
+* subscriptions do Microsoft Graph
+* webhook
+* processamento assíncrono
+* scheduler
+* filas
+* processamento de e-mails
+* inteligência artificial
+* persistência dos e-mails
+* arquitetura distribuída
+
+A intenção é manter a POC o mais simples possível.
+
+---
+
+# 3. Stack
+
+Utilizar:
+
+```text
+Python 3.12+
+AWS Lambda
+MSAL for Python
+Redis
+requests ou httpx
+Microsoft Graph API
+Microsoft Entra ID
+```
+
+Bibliotecas sugeridas:
+
+```text
+msal
+redis
+requests
+```
+
+---
+
+# 4. Conceito principal da implementação
+
+Não armazenar o Refresh Token manualmente.
+
+Não criar estruturas como:
+
+```json
+{
+  "accessToken": "...",
+  "refreshToken": "..."
+}
+```
+
+Não extrair o Refresh Token do cache.
+
+Não manipular o Refresh Token diretamente.
+
+Utilizar:
+
+```python
+msal.SerializableTokenCache
+```
+
+O MSAL mantém internamente informações relacionadas a:
+
+* Access Token
+* Refresh Token
+* Account
+* scopes
+* metadados dos tokens
+
+A aplicação deve apenas:
+
+```text
+Redis
+   ↓
+blob MSAL
+   ↓
+SerializableTokenCache.deserialize()
+   ↓
+MSAL
+```
+
+e posteriormente:
+
+```text
+MSAL
+   ↓
+cache atualizado
+   ↓
+SerializableTokenCache.serialize()
+   ↓
+Redis
+```
+
+O próprio MSAL deve ser responsável por decidir se:
+
+* existe Access Token válido no cache;
+* o Access Token expirou;
+* é possível utilizar Refresh Token;
+* precisa obter novo Access Token.
+
+---
+
+# 5. Arquitetura simplificada
+
+```text
+┌─────────────────┐
+│ Front / Cliente │
+│ autenticado     │
+└────────┬────────┘
+         │
+         │ Access Token
+         ▼
+┌────────────────────────────┐
+│ AWS Lambda Python          │
+│                            │
+│ MSAL                       │
+│ ConfidentialClientApp      │
+└─────────────┬──────────────┘
+              │
+              │ OBO
+              ▼
+┌────────────────────────────┐
+│ Microsoft Entra ID         │
+└─────────────┬──────────────┘
+              │
+              │ Token Graph
+              ▼
+┌────────────────────────────┐
+│ SerializableTokenCache     │
+└─────────────┬──────────────┘
+              │ serialize()
+              ▼
+┌────────────────────────────┐
+│ Redis                      │
+│                            │
+│ msal-cache:{userId}        │
+│       ↓                    │
+│ MSAL CACHE BLOB            │
+└────────────────────────────┘
+```
+
+Posteriormente:
+
+```text
+              Execução Lambda
+                    │
+                    ▼
+             Redis GET cache
+                    │
+                    ▼
+       SerializableTokenCache
+                    │
+             deserialize()
+                    │
+                    ▼
+                  MSAL
+                    │
+          aquisição silenciosa
+                    │
+              ┌─────┴──────┐
+              │            │
+         AT válido      AT expirado
+              │            │
+              │       MSAL usa RT
+              │            │
+              └─────┬──────┘
+                    │
+                    ▼
+              Access Token
+                    │
+                    ▼
+       Microsoft Graph /me/messages
+                    │
+                    ▼
+               10 e-mails
+```
+
+---
+
+# 6. Fluxos da POC
+
+A aplicação deve possuir dois fluxos distintos.
+
+## Fluxo A — Inicialização do Token Cache
+
+Esse fluxo representa o momento em que o usuário está autenticado.
+
+Entrada:
+
+```text
+Access Token do usuário
+userId
+```
+
+Exemplo conceitual:
+
+```http
+POST /auth/cache
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "userId": "123456"
+}
+```
+
+O Access Token recebido deve representar o usuário e deve ser adequado para utilização como **user assertion no fluxo OBO**.
+
+A Lambda deverá:
+
+```text
+1. Receber Access Token.
+
+2. Identificar o usuário.
+
+3. Criar SerializableTokenCache.
+
+4. Criar ConfidentialClientApplication.
+
+5. Passar o cache para o MSAL.
+
+6. Executar acquire_token_on_behalf_of().
+
+7. Solicitar token para Microsoft Graph.
+
+8. MSAL adiciona as informações de autenticação
+   ao Token Cache.
+
+9. Serializar Token Cache.
+
+10. Persistir blob no Redis.
+
+11. Opcionalmente chamar Microsoft Graph
+    para provar que o token funciona.
+
+12. Retornar sucesso.
+```
+
+Exemplo conceitual:
+
+```python
+cache = msal.SerializableTokenCache()
+
+app = msal.ConfidentialClientApplication(
+    client_id=CLIENT_ID,
+    client_credential=CLIENT_SECRET,
+    authority=AUTHORITY,
+    token_cache=cache
+)
+
+result = app.acquire_token_on_behalf_of(
+    user_assertion=incoming_access_token,
+    scopes=GRAPH_SCOPES
+)
+```
+
+Após a autenticação:
+
+```python
+serialized_cache = cache.serialize()
+```
+
+Salvar:
+
+```python
+redis.set(
+    f"msal-cache:{user_id}",
+    serialized_cache
+)
+```
+
+---
+
+# 7. Observação importante sobre o Access Token inicial
+
+Para validar realmente o cenário **On-Behalf-Of**, o token enviado pelo frontend para o backend deve representar acesso à API/backend.
+
+Arquitetura:
+
+```text
+Angular
+   │
+   │ token para API Backend
+   ▼
+Lambda / API
+   │
+   │ OBO
+   ▼
+Microsoft Entra
+   │
+   │ token para Graph
+   ▼
+Microsoft Graph
+```
+
+Não implementar a POC assumindo simplesmente que qualquer Access Token recebido pelo frontend pode ser utilizado como `user_assertion`.
+
+Validar:
+
+```text
+aud
+tenant
+issuer
+exp
+scopes
+```
+
+O `aud` do token recebido deve corresponder à API protegida que representa esse backend no Entra ID.
+
+---
+
+# 8. Fluxo B — Execução simulando Background
+
+Esse é o principal teste da POC.
+
+Esse fluxo deve funcionar **sem receber novamente o Access Token original do usuário**.
+
+Exemplo:
+
+```http
+POST /emails
+
+Content-Type: application/json
+
+{
+  "userId": "123456"
+}
+```
+
+Essa chamada representa conceitualmente um processamento futuro em background.
+
+O fluxo deverá ser:
+
+```text
+POST /emails
+       │
+       ▼
+receber userId
+       │
+       ▼
+Redis
+       │
+GET msal-cache:{userId}
+       │
+       ▼
+Token Cache Blob
+       │
+       ▼
+SerializableTokenCache
+       │
+deserialize()
+       │
+       ▼
+ConfidentialClientApplication
+       │
+       ▼
+MSAL
+       │
+aquisição silenciosa do token
+       │
+       ├── Access Token válido
+       │
+       └── Refresh quando necessário
+       │
+       ▼
+Access Token Graph
+       │
+       ▼
+GET /me/messages?$top=10
+       │
+       ▼
+retorna 10 e-mails
+```
+
+---
+
+# 9. Recuperação do Token Cache
+
+Buscar:
+
+```python
+cache_blob = redis.get(f"msal-cache:{user_id}")
+```
+
+Criar:
+
+```python
+cache = msal.SerializableTokenCache()
+```
+
+Caso exista cache:
+
+```python
+cache.deserialize(cache_blob)
+```
+
+Criar o MSAL utilizando **esse mesmo cache**:
+
+```python
+app = msal.ConfidentialClientApplication(
+    client_id=CLIENT_ID,
+    client_credential=CLIENT_SECRET,
+    authority=AUTHORITY,
+    token_cache=cache
+)
+```
+
+O código não deve extrair tokens diretamente do JSON do cache.
+
+---
+
+# 10. Obtenção do token no fluxo Background
+
+A prioridade deve ser deixar o próprio **MSAL** recuperar o token.
+
+O serviço deve localizar a conta existente no Token Cache.
+
+Conceitualmente:
+
+```python
+accounts = app.get_accounts()
+```
+
+Para esta POC haverá apenas uma conta por cache Redis.
+
+Exemplo:
+
+```python
+if not accounts:
+    raise TokenCacheAccountNotFound()
+```
+
+Selecionar:
+
+```python
+account = accounts[0]
+```
+
+Então executar uma aquisição silenciosa:
+
+```python
+result = app.acquire_token_silent(
+    scopes=GRAPH_SCOPES,
+    account=account
+)
+```
+
+A intenção é testar:
+
+```text
+MSAL
+ │
+ ├── encontra Access Token válido
+ │      ↓
+ │   retorna AT
+ │
+ └── AT inválido/expirado
+        ↓
+     utiliza mecanismos existentes
+     no Token Cache
+        ↓
+     Entra ID
+        ↓
+     novo Access Token
+```
+
+A aplicação nunca deve executar algo semelhante a:
+
+```python
+refresh_token = redis.get(...)
+```
+
+ou:
+
+```python
+requests.post(
+    token_endpoint,
+    data={
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token
+    }
+)
+```
+
+Esse comportamento está explicitamente fora do escopo.
+
+O gerenciamento de token deverá ficar sob responsabilidade do MSAL.
+
+---
+
+# 11. Persistência do cache após a aquisição silenciosa
+
+Este requisito é extremamente importante.
+
+Depois de:
+
+```python
+app.acquire_token_silent(...)
+```
+
+o MSAL pode alterar o conteúdo do Token Cache.
+
+Por exemplo, caso tenha ocorrido renovação do token.
+
+Portanto, após qualquer operação de aquisição de token verificar:
+
+```python
+cache.has_state_changed
+```
+
+Se:
+
+```python
+cache.has_state_changed == True
+```
+
+persistir novamente no Redis:
+
+```python
+redis.set(
+    redis_key,
+    cache.serialize()
+)
+```
+
+Fluxo:
+
+```text
+Redis
+ ↓
+cache antigo
+ ↓
+MSAL
+ ↓
+refresh
+ ↓
+cache alterado
+ ↓
+serialize()
+ ↓
+Redis
+ ↓
+cache atualizado
+```
+
+Esse comportamento é obrigatório.
+
+---
+
+# 12. Estratégia de chave Redis
+
+Mesmo sendo uma POC, estruturar o cache por usuário.
+
+Utilizar:
+
+```text
+msal-cache:{userId}
+```
+
+Exemplo:
+
+```text
+msal-cache:abc123
+```
+
+Cada usuário deve possuir seu próprio blob.
+
+Não utilizar:
+
+```text
+msal-cache
+```
+
+global para todos os usuários.
+
+Isso é importante porque a arquitetura final poderá atender aproximadamente **1800 usuários**.
+
+Exemplo futuro:
+
+```text
+msal-cache:user-0001
+msal-cache:user-0002
+msal-cache:user-0003
+...
+msal-cache:user-1800
+```
+
+Para esta POC basta testar com um ou poucos usuários.
+
+---
+
+# 13. Valor salvo no Redis
+
+Salvar o resultado completo de:
+
+```python
+cache.serialize()
+```
+
+Exemplo conceitual:
+
+```text
+KEY
+
+msal-cache:abc123
+```
+
+Valor:
+
+```text
+<MSAL SERIALIZED TOKEN CACHE BLOB>
+```
+
+Não modificar o formato retornado pelo MSAL.
+
+Não criar DTO próprio de tokens.
+
+Não converter o cache em uma estrutura customizada.
+
+O Redis deve funcionar simplesmente como mecanismo de persistência do Token Cache.
+
+---
+
+# 14. TTL do Redis
+
+Para a POC, não utilizar TTL curto.
+
+O objetivo é conseguir desligar/encerrar uma execução Lambda e posteriormente recuperar o cache.
+
+O Claude Code pode deixar o TTL configurável:
+
+```text
+REDIS_CACHE_TTL
+```
+
+Porém o padrão da POC pode ser:
+
+```text
+sem expiração
+```
+
+ou um TTL suficientemente longo para os testes.
+
+O TTL do Redis **não representa o tempo de validade do Access Token**.
+
+São conceitos diferentes.
+
+O MSAL controla validade e renovação dos tokens.
+
+---
+
+# 15. Microsoft Graph
+
+Após conseguir o Access Token:
+
+```python
+graph_access_token = result["access_token"]
+```
+
+executar:
+
+```http
+GET https://graph.microsoft.com/v1.0/me/messages?$top=10
+Authorization: Bearer <graph_access_token>
+```
+
+Utilizar preferencialmente:
+
+```http
+GET /v1.0/me/messages
+```
+
+porque estamos trabalhando com token delegado do usuário.
+
+---
+
+# 16. Campos dos e-mails
+
+A POC não precisa trazer todos os dados.
+
+Utilizar:
+
+```http
+GET /v1.0/me/messages
+    ?$top=10
+    &$select=id,subject,receivedDateTime,from
+    &$orderby=receivedDateTime desc
+```
+
+Retornar:
+
+```json
+{
+  "count": 10,
+  "emails": [
+    {
+      "id": "...",
+      "subject": "...",
+      "receivedDateTime": "...",
+      "from": {
+        "emailAddress": {
+          "name": "...",
+          "address": "..."
+        }
+      }
+    }
+  ]
+}
+```
+
+Não é necessário salvar os e-mails.
+
+---
+
+# 17. Permissões Microsoft Graph
+
+Utilizar permissão **delegated**.
+
+Para a POC:
+
+```text
+Mail.Read
+```
+
+Também configurar todas as permissões necessárias ao fluxo de autenticação e consentimento utilizado pela aplicação.
+
+O objetivo é que o token final para Graph tenha permissão suficiente para executar:
+
+```http
+GET /me/messages
+```
+
+---
+
+# 18. App Registration
+
+Considerar que existe uma App Registration no Microsoft Entra ID.
+
+A Lambda deverá receber:
+
+```text
+TENANT_ID
+CLIENT_ID
+CLIENT_SECRET
+```
+
+Configuração:
+
+```text
+AUTHORITY=https://login.microsoftonline.com/{TENANT_ID}
+```
+
+Scopes Graph:
+
+```python
+GRAPH_SCOPES = [
+    "https://graph.microsoft.com/Mail.Read"
+]
+```
+
+O Claude Code não deve deixar:
+
+* client secret
+* password
+* connection string
+
+hardcoded.
+
+---
+
+# 19. Variáveis de ambiente
+
+Implementar suporte às seguintes variáveis:
+
+```text
+AZURE_TENANT_ID
+AZURE_CLIENT_ID
+AZURE_CLIENT_SECRET
+
+REDIS_HOST
+REDIS_PORT
+REDIS_PASSWORD
+REDIS_SSL
+
+GRAPH_BASE_URL
+```
+
+Valores padrão permitidos:
+
+```text
+GRAPH_BASE_URL=https://graph.microsoft.com/v1.0
+REDIS_PORT=6379
+```
+
+---
+
+# 20. Organização sugerida do projeto
+
+Estrutura:
+
+```text
+src/
+│
+├── lambda_handler.py
+│
+├── config.py
+│
+├── auth/
+│   ├── msal_service.py
+│   └── token_cache_service.py
+│
+├── redis/
+│   └── redis_client.py
+│
+├── graph/
+│   └── graph_client.py
+│
+├── models/
+│   └── responses.py
+│
+└── exceptions/
+    └── auth_exceptions.py
+
+tests/
+│
+├── test_msal_service.py
+├── test_token_cache_service.py
+└── test_graph_client.py
+
+requirements.txt
+README.md
+```
+
+Manter o código simples.
+
+Não criar arquitetura excessivamente abstrata para a POC.
+
+---
+
+# 21. Responsabilidades
+
+## lambda_handler.py
+
+Responsável por:
+
+```text
+receber request
+↓
+identificar operação
+↓
+chamar serviço correto
+↓
+montar response HTTP
+```
+
+---
+
+## msal_service.py
+
+Responsável por:
+
+```text
+criar ConfidentialClientApplication
+
+executar acquire_token_on_behalf_of
+
+executar acquire_token_silent
+
+obter account do cache
+
+tratar erros retornados pelo MSAL
+```
+
+---
+
+## token_cache_service.py
+
+Responsável por:
+
+```text
+criar SerializableTokenCache
+
+buscar cache Redis
+
+deserialize
+
+serialize
+
+persistir alterações do cache
+```
+
+---
+
+## redis_client.py
+
+Responsável apenas por:
+
+```text
+GET
+SET
+DELETE
+PING
+```
+
+Não adicionar lógica MSAL nessa classe.
+
+---
+
+## graph_client.py
+
+Responsável por:
+
+```text
+chamar Microsoft Graph
+
+enviar Bearer Token
+
+consultar /me/messages
+
+tratar status HTTP
+```
+
+---
+
+# 22. Endpoints / operações
+
+A POC deverá oferecer duas operações.
+
+## 22.1 Bootstrap / primeiro acesso
+
+```http
+POST /auth/cache
+```
+
+Request:
+
+```http
+Authorization: Bearer <USER_ACCESS_TOKEN>
+```
+
+Body:
+
+```json
+{
+  "userId": "abc123"
+}
+```
+
+Processamento:
+
+```text
+recebe token
+↓
+OBO
+↓
+Graph Access Token
+↓
+MSAL Token Cache
+↓
+serialize
+↓
+Redis
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "userId": "abc123",
+  "cacheStored": true
+}
+```
+
+Nunca retornar:
+
+```text
+Refresh Token
+Token Cache
+Client Secret
+```
+
+---
+
+# 23. Endpoint Background
+
+```http
+POST /emails
+```
+
+Request:
+
+```json
+{
+  "userId": "abc123"
+}
+```
+
+**Importante:**
+
+Essa requisição não deve enviar Access Token do usuário.
+
+Isso é proposital.
+
+Queremos comprovar que o backend consegue utilizar apenas:
+
+```text
+userId
++
+Redis
++
+MSAL Token Cache
+```
+
+Fluxo:
+
+```text
+userId
+ ↓
+Redis
+ ↓
+cache
+ ↓
+MSAL
+ ↓
+token
+ ↓
+Graph
+ ↓
+10 e-mails
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "userId": "abc123",
+  "tokenSource": "MSAL_CACHE",
+  "emailCount": 10,
+  "emails": []
+}
+```
+
+---
+
+# 24. Teste principal da POC
+
+O teste mais importante deve seguir exatamente esta sequência.
+
+## Etapa 1
+
+Usuário autenticado executa:
+
+```text
+POST /auth/cache
+```
+
+---
+
+## Etapa 2
+
+Confirmar no Redis:
+
+```text
+msal-cache:{userId}
+```
+
+Existe.
+
+---
+
+## Etapa 3
+
+Encerrar a execução Lambda.
+
+Não reutilizar:
+
+* variável global contendo token;
+* access token recebido no primeiro request;
+* sessão em memória.
+
+---
+
+## Etapa 4
+
+Executar:
+
+```text
+POST /emails
+```
+
+enviando apenas:
+
+```json
+{
+  "userId": "abc123"
+}
+```
+
+---
+
+## Etapa 5
+
+Lambda deverá:
+
+```text
+buscar Redis
+↓
+deserialize cache
+↓
+MSAL
+↓
+obter Access Token
+↓
+Graph
+↓
+10 e-mails
+```
+
+---
+
+# 25. Teste de Refresh Token
+
+Além do teste básico, criar uma forma de validar a renovação.
+
+Não manipular manualmente o Refresh Token.
+
+O objetivo deve ser:
+
+```text
+cache existe
+↓
+Access Token não está mais utilizável/está expirado
+↓
+acquire_token_silent()
+↓
+MSAL utiliza informações existentes no cache
+↓
+Microsoft Entra ID
+↓
+novo Access Token
+↓
+Token Cache atualizado
+↓
+Redis atualizado
+↓
+Graph funciona
+```
+
+O README deve explicar como realizar esse teste.
+
+Não criar hacks para alterar manualmente o JWT.
+
+Preferencialmente realizar o teste aguardando a expiração normal do Access Token ou usando uma estratégia segura suportada pelo fluxo utilizado.
+
+---
+
+# 26. Logs
+
+Adicionar logs úteis:
+
+```text
+[AUTH] Starting OBO flow
+
+[AUTH] OBO completed successfully
+
+[CACHE] Token cache loaded from Redis
+
+[CACHE] Token cache not found
+
+[CACHE] Token cache changed
+
+[CACHE] Token cache persisted
+
+[MSAL] Attempting silent token acquisition
+
+[MSAL] Token acquired successfully
+
+[GRAPH] Requesting messages
+
+[GRAPH] Messages retrieved: 10
+```
+
+Nunca logar:
+
+```text
+Access Token
+Refresh Token
+Client Secret
+Token Cache Blob
+Authorization Header
+```
+
+---
+
+# 27. Tratamento de erros
+
+Criar tratamento para pelo menos:
+
+### CACHE_NOT_FOUND
+
+```json
+{
+  "error": "CACHE_NOT_FOUND",
+  "message": "Token cache not found for user."
+}
+```
+
+---
+
+### ACCOUNT_NOT_FOUND
+
+```json
+{
+  "error": "ACCOUNT_NOT_FOUND",
+  "message": "No MSAL account found in token cache."
+}
+```
+
+---
+
+### TOKEN_ACQUISITION_FAILED
+
+```json
+{
+  "error": "TOKEN_ACQUISITION_FAILED",
+  "message": "Unable to acquire Graph access token."
+}
+```
+
+---
+
+### INTERACTION_REQUIRED
+
+Quando MSAL indicar que não consegue renovar o token silenciosamente:
+
+```json
+{
+  "error": "INTERACTION_REQUIRED",
+  "message": "User authentication is required again."
+}
+```
+
+Isso é importante.
+
+A POC deve deixar evidente que cache + Refresh Token **não garantem acesso eterno**.
+
+Políticas do Entra ID, revogação de sessão, mudança de senha, Conditional Access, consentimento e outros fatores podem exigir autenticação novamente.
+
+---
+
+### GRAPH_ERROR
+
+```json
+{
+  "error": "GRAPH_ERROR",
+  "statusCode": 401,
+  "message": "Microsoft Graph request failed."
+}
+```
+
+---
+
+### REDIS_ERROR
+
+```json
+{
+  "error": "REDIS_ERROR",
+  "message": "Unable to access token cache."
+}
+```
+
+---
+
+# 28. Concorrência do cache
+
+Mesmo sendo uma POC, evitar esta sequência perigosa:
+
+```text
+Lambda A → GET cache
+Lambda B → GET cache
+
+Lambda A → refresh
+Lambda B → refresh
+
+Lambda A → SET
+Lambda B → SET antigo
+```
+
+Não é necessário implementar mecanismo distribuído sofisticado nesta POC.
+
+Porém:
+
+* isolar caches por `userId`;
+* encapsular operações Redis;
+* documentar que concorrência/locking será requisito de produção.
+
+Não adicionar Redis distributed lock nesta primeira POC, a menos que seja extremamente simples.
+
+---
+
+# 29. Segurança
+
+Nunca:
+
+```text
+logar token
+logar cache
+retornar token
+retornar refresh token
+retornar client secret
+```
+
+Credenciais devem vir de variáveis de ambiente.
+
+Para produção posteriormente poderá ser utilizado:
+
+```text
+AWS Secrets Manager
+```
+
+Porém não é obrigatório implementar Secrets Manager nesta POC.
+
+---
+
+# 30. Critérios de aceite
+
+A POC será considerada bem-sucedida se todos os cenários abaixo funcionarem.
+
+### Cenário 1 — OBO
+
+Dado:
+
+```text
+Access Token válido de um usuário
+```
+
+Quando:
+
+```text
+POST /auth/cache
+```
+
+Então:
+
+```text
+MSAL executa OBO
+```
+
+e consegue um token para Graph.
+
+---
+
+### Cenário 2 — Cache
+
+Depois do OBO:
+
+```text
+SerializableTokenCache.serialize()
+```
+
+deve gerar o cache.
+
+E deverá existir:
+
+```text
+msal-cache:{userId}
+```
+
+no Redis.
+
+---
+
+### Cenário 3 — Nova execução
+
+Uma execução completamente nova da Lambda deverá conseguir:
+
+```text
+Redis
+↓
+cache
+↓
+deserialize
+↓
+MSAL
+```
+
+sem depender de memória da execução anterior.
+
+---
+
+### Cenário 4 — Background
+
+A operação:
+
+```text
+POST /emails
+```
+
+deve receber apenas:
+
+```text
+userId
+```
+
+e não:
+
+```text
+Access Token
+Refresh Token
+```
+
+---
+
+### Cenário 5 — Token silencioso
+
+O MSAL deverá tentar obter o token através do cache persistido.
+
+---
+
+### Cenário 6 — Refresh
+
+Caso seja necessária renovação e o estado de autenticação ainda permita uma renovação silenciosa:
+
+```text
+MSAL
+↓
+cache
+↓
+Entra ID
+↓
+novo Access Token
+```
+
+sem login interativo.
+
+---
+
+### Cenário 7 — Atualização do Redis
+
+Se:
+
+```python
+cache.has_state_changed
+```
+
+for verdadeiro, o cache atualizado deverá ser novamente salvo no Redis.
+
+---
+
+### Cenário 8 — Microsoft Graph
+
+Utilizando o token retornado pelo MSAL:
+
+```http
+GET /me/messages?$top=10
+```
+
+deve retornar os e-mails.
+
+---
+
+### Cenário 9 — Zero uso direto do Refresh Token
+
+Não pode existir código de negócio fazendo:
+
+```text
+get refresh token
+save refresh token
+parse refresh token
+refresh_token grant manual
+```
+
+Todo gerenciamento deve ser feito pelo MSAL.
+
+---
+
+# 31. Testes unitários
+
+Criar testes unitários básicos utilizando mocks.
+
+Cobrir:
+
+```text
+cache encontrado
+
+cache não encontrado
+
+cache serializado
+
+cache desserializado
+
+MSAL retorna token
+
+MSAL retorna erro
+
+MSAL altera cache
+
+cache alterado é persistido
+
+Graph retorna 200
+
+Graph retorna erro
+```
+
+Não é necessário atingir percentual específico de cobertura.
+
+---
+
+# 32. README
+
+Criar README contendo:
+
+## Pré-requisitos
+
+```text
+Python
+Redis
+App Registration Microsoft Entra
+CLIENT_ID
+CLIENT_SECRET
+TENANT_ID
+Mail.Read
+```
+
+## Configuração
+
+Explicar variáveis de ambiente.
+
+## Execução
+
+Explicar:
+
+```text
+1. subir Redis
+2. configurar environment variables
+3. executar bootstrap
+4. verificar Redis
+5. executar consulta de e-mails
+```
+
+## Teste principal
+
+Documentar claramente:
+
+```text
+Primeiro request:
+Access Token → OBO → Redis
+
+Segundo request:
+userId → Redis → MSAL → Graph
+```
+
+## Teste de refresh
+
+Explicar como comprovar que uma execução posterior consegue adquirir um novo Access Token sem receber novamente o Access Token original.
+
+---
+
+# 33. Docker Redis para desenvolvimento local
+
+Opcionalmente fornecer:
+
+```yaml
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+```
+
+Objetivo:
+
+permitir testar localmente antes de configurar um Redis na AWS.
+
+Não criar outros containers.
+
+---
+
+# 34. Fora do escopo
+
+Explicitamente não desenvolver nesta POC:
+
+```text
+Graph Subscription
+Webhook
+Delta Query
+SQS
+SNS
+EventBridge
+S3
+DynamoDB
+Step Functions
+IA
+processamento dos e-mails
+persistência dos e-mails
+controle de subscription
+scheduler
+renovação de subscriptions
+integração CRM
+1800 execuções simultâneas
+infraestrutura definitiva de produção
+```
+
+---
+
+# 35. Resultado esperado da POC
+
+Ao final deve ser possível demonstrar:
+
+```text
+                    PRIMEIRO ACESSO
+
+Angular / Cliente
+       │
+       │ Access Token
+       ▼
+     Lambda
+       │
+       │ OBO
+       ▼
+      MSAL
+       │
+       ▼
+ Microsoft Entra ID
+       │
+       ▼
+ MSAL Token Cache
+       │
+       │ serialize()
+       ▼
+      Redis
+```
+
+Depois, sem o usuário:
+
+```text
+                  BACKGROUND TEST
+
+      Lambda
+         │
+         │ userId
+         ▼
+       Redis
+         │
+         │ MSAL Cache Blob
+         ▼
+SerializableTokenCache
+         │
+         │ deserialize()
+         ▼
+        MSAL
+         │
+         │ acquire_token_silent()
+         ▼
+┌─────────────────────────────┐
+│ Access Token ainda válido?  │
+└──────────────┬──────────────┘
+               │
+        sim ───┼──── não
+               │       │
+               │       ▼
+               │    MSAL / RT
+               │       │
+               │       ▼
+               │   Entra ID
+               │       │
+               └───┬───┘
+                   ▼
+             Access Token
+                   │
+                   ▼
+           Microsoft Graph
+                   │
+                   ▼
+         GET /me/messages
+                   │
+                   ▼
+              10 e-mails
+```
+
+---
+
+# 36. Principal hipótese que a POC deve validar
+
+A pergunta central desta POC é:
+
+> É possível, após uma autenticação inicial do usuário, persistir o MSAL Token Cache em Redis e, em uma execução posterior da Lambda sem o Access Token original do usuário, restaurar esse cache e deixar o MSAL adquirir silenciosamente um token delegado válido para acessar o Microsoft Graph?
+
+A implementação e os testes devem ser orientados principalmente para responder essa pergunta.
+
+Caso alguma característica específica do MSAL Python / fluxo OBO utilizado impeça a aquisição silenciosa posterior a partir do cache sem a `user_assertion` original, **não criar workaround escondido**.
+
+Nesse caso:
+
+1. documentar exatamente o comportamento observado;
+2. registrar o erro retornado pelo MSAL de forma segura;
+3. explicar tecnicamente a limitação;
+4. manter a POC capaz de demonstrar onde o fluxo deixa de funcionar.
+
+Isso faz parte do objetivo da POC.
+
+---
+
+# 37. Instrução final para o Claude Code
+
+Implemente esta POC priorizando simplicidade e capacidade de comprovação do fluxo.
+
+Não adicionar componentes ou funcionalidades não solicitadas.
+
+O foco é exclusivamente validar:
+
+```text
+Access Token inicial
+        ↓
+OBO
+        ↓
+MSAL Token Cache
+        ↓
+Redis
+        ↓
+nova execução
+        ↓
+MSAL Token Cache
+        ↓
+aquisição silenciosa
+        ↓
+Access Token Graph
+        ↓
+GET /me/messages
+        ↓
+10 e-mails
+```
+
+O MSAL deve ser o responsável pelo gerenciamento dos tokens.
+
+O Redis deve ser apenas o mecanismo de persistência do **blob serializado do MSAL Token Cache**.
+
+Não implementar gerenciamento manual de Refresh Token.
+
+Além do código, criar documentação suficiente para que seja possível provar experimentalmente se o processo continua funcionando quando a segunda chamada ocorre sem o usuário autenticado naquele momento.
