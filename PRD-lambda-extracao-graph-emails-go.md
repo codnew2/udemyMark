@@ -830,7 +830,7 @@ O desenvolvimento será aceito quando:
 
 ## 28. Decisões que precisam ser confirmadas antes da produção
 
-O Claude Code deve deixar estes itens configuráveis e registrar `TODO: ENVIRONMENT_DECISION` onde não houver resposta no repositório:
+O  deve deixar estes itens configuráveis e registrar `TODO: ENVIRONMENT_DECISION` onde não houver resposta no repositório:
 
 1. URL e contrato real do ECS.
 2. Autenticação serviço-a-serviço com o ECS.
@@ -886,9 +886,9 @@ Ele deverá ter endpoint, escopos, paginação, chave S3 e modelo próprios. Nã
 
 ---
 
-## 31. Resultado esperado do Claude Code
+## 31. Resultado esperado
 
-Ao finalizar, o Claude Code deve apresentar:
+Ao finalizar, o deve apresentar:
 
 1. Resumo da solução implementada.
 2. Árvore final de arquivos.
