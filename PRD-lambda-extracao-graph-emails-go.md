@@ -12,7 +12,7 @@
 
 ## 1. principal
 
-Desenvolva um projeto completo em Go para uma AWS Lambda que consome mensagens de uma fila Amazon SQS, obtém de um ECS interno um access token delegado do Microsoft Graph para o usuário informado, consulta no DynamoDB a última extração concluída, busca todos os e-mails do período aplicável na Microsoft Graph API, percorre toda a paginação, salva cada e-mail como JSON no Amazon S3 e atualiza o checkpoint no DynamoDB somente após a persistência integral da janela.
+Desenvolva um projeto completo em Go para uma AWS Lambda que consome mensagens de uma fila Amazon SQS, obtém de um ECS interno delegado do Microsoft Graph para o usuário informado, consulta no DynamoDB a última extração concluída, busca todos os e-mails do período aplicável na Microsoft Graph API, percorre toda a paginação, salva cada e-mail como JSON no Amazon S3 e atualiza o checkpoint no DynamoDB somente após a persistência integral da janela.
 
 O projeto deve ser executável, testável e preparado para implantação em AWS Lambda. Não gerar somente exemplos ou pseudocódigo. Implementar código de produção, testes unitários, configuração, observabilidade, tratamento de erros, documentação e infraestrutura como código conforme as definições deste PRD.
 
@@ -24,7 +24,7 @@ Não inventar URLs, nomes de recursos AWS, mecanismos de autenticação interna 
 
 O sistema precisa extrair e-mails de usuarios autorizados por meio de permissões delegadas do Microsoft Graph. O processo ocorre em background, sem o usuário conectado no momento da extração.
 
-O fluxo de autenticação e renovação de tokens já existe em outro serviço executado no Amazon ECS. Essa Lambda não implementará MSAL, OBO, refresh token ou cache de token. Ela será cliente do ECS de tokens e receberá dele um access token válido para o usuário da mensagem.
+O fluxo de autenticação e renovação já existe em outro serviço executado no Amazon ECS. Essa Lambda não implementará MSAL, OBO, refresh ou cache . Ela será cliente do ECS  e receberá dele um access válido para o usuário da mensagem.
 
 Nesta primeira entrega, a Lambda processará somente e-mails. A arquitetura deve permitir que futuramente seja criado um extrator de transcrições sem misturar suas regras específicas com as regras de e-mail.
 
@@ -35,7 +35,7 @@ Nesta primeira entrega, a Lambda processará somente e-mails. A arquitetura deve
 Construir um processo resiliente e idempotente que:
 
 1. Receba pelo SQS a identificação de um usuário.
-2. Obtenha um access token delegado válido por meio do ECS interno.
+2. Obtenha um access delegado válido por meio do ECS interno.
 3. Determine a janela de extração a partir do checkpoint no DynamoDB.
 4. Busque todos os e-mails dessa janela no Microsoft Graph.
 5. Percorra todas as páginas retornadas pela API.
@@ -51,7 +51,7 @@ Não faz parte desta entrega:
 
 - implementar autenticação do front-end;
 - executar OBO diretamente na Lambda;
-- acessar ou persistir refresh token na Lambda;
+- acessar ou persistir refresh na Lambda;
 - implementar o cache MSAL;
 - criar ou renovar subscriptions do Microsoft Graph;
 - utilizar delta query;
@@ -67,9 +67,9 @@ Não faz parte desta entrega:
 ## 5. Premissas
 
 - O App Registration e os consentimentos delegados já estão configurados.
-- O token entregue pelo ECS possui permissão suficiente para ler o conteúdo necessário dos e-mails, tipicamente `Mail.Read`.
-- O token representa o mesmo usuário indicado na mensagem SQS.
-- O ECS de tokens é acessível pela rede da Lambda, preferencialmente dentro da mesma VPC por endpoint interno.
+- O entregue pelo ECS possui permissão suficiente para ler o conteúdo necessário dos e-mails, tipicamente `Mail.Read`.
+- O representa o mesmo usuário indicado na mensagem SQS.
+- O ECS de é acessível pela rede da Lambda, preferencialmente dentro da mesma VPC por endpoint interno.
 - A fila SQS, sua DLQ, o bucket S3 e a tabela DynamoDB existem ou poderão ser criados pela infraestrutura como código.
 - Todos os horários internos e persistidos usarão UTC e formato RFC 3339/ISO 8601.
 - A data inicial da primeira carga será calculada como `extractionEndTime - INITIAL_LOOKBACK_DAYS`, com valor padrão de 365 dias.
@@ -83,7 +83,7 @@ Não faz parte desta entrega:
 flowchart TD
     SQS["Amazon SQS"] --> ESM["Lambda Event Source Mapping"]
     ESM --> L["Lambda Graph Extractor"]
-    L --> TOKEN["ECS Token Service"]
+    L --> ECS["ECS ecs Service"]
     L --> DDB["DynamoDB Checkpoint"]
     L --> GRAPH["Microsoft Graph API"]
     L --> S3["S3 email JSON"]
@@ -143,7 +143,7 @@ Para cada registro recebido do SQS:
 ### 8.3 Validação
 
 - Rejeitar mensagem sem `userId` ou com `schemaVersion` incompatível.
-- Nunca registrar o access token, corpo completo do e-mail ou dados sensíveis da mensagem em logs.
+- Nunca registrar, corpo completo do e-mail ou dados sensíveis da mensagem em logs.
 - Mensagem inválida deve ser marcada como falha do lote para seguir a política de retry/DLQ. Se a organização preferir não repetir erros permanentes de contrato, disponibilizar configuração documentada para descartá-la ou enviá-la a uma fila de quarentena; o padrão desta entrega será retry/DLQ.
 
 ---
@@ -159,7 +159,7 @@ Configurar Event Source Mapping com:
 - DLQ configurada na fila de origem;
 - `maxReceiveCount` inicial recomendado: `5`;
 - visibility timeout maior que o timeout máximo efetivo da Lambda, seguindo o padrão corporativo e a recomendação vigente da AWS;
-- limite de concorrência configurável para proteger o ECS de tokens e o Microsoft Graph.
+- limite de concorrência configurável para proteger o ECS e o Microsoft Graph.
 
 O handler deve processar todos os registros do lote e devolver:
 
@@ -177,14 +177,14 @@ Uma falha de um usuário não pode obrigar o reprocessamento dos usuários que t
 
 ---
 
-## 10. Contrato do ECS de tokens
+## 10. Contrato do ECS
 
-O código deve declarar uma porta/interface para obtenção de token. A implementação HTTP será um adapter substituível.
+O código deve declarar uma porta/interface para obtenção. A implementação HTTP será um adapter substituível.
 
 ### 10.1 Requisição lógica
 
 ```http
-POST {TOKEN_SERVICE_BASE_URL}{TOKEN_SERVICE_PATH}
+POST {ECS_SERVICE_BASE_URL}{ECS_SERVICE_PATH}
 Content-Type: application/json
 X-Correlation-ID: {correlationId}
 ```
@@ -199,8 +199,8 @@ X-Correlation-ID: {correlationId}
 
 ```json
 {
-  "accessToken": "eyJ...",
-  "tokenType": "Bearer",
+  "ECS": "eyJ...",
+  "ECSType": "Bearer",
   "expiresAt": "2026-09-11T11:00:00Z"
 }
 ```
@@ -208,12 +208,12 @@ X-Correlation-ID: {correlationId}
 ### 10.3 Regras
 
 - A rota exata e o formato final devem ser configuráveis/adaptáveis ao contrato real do ECS.
-- Não persistir o access token.
-- Não incluir o token em logs, métricas ou erros.
+- Não persistir.
+- Não incluir em logs, métricas ou erros.
 - Configurar timeout HTTP curto e explícito.
 - Repetir apenas falhas transitórias: timeout, falha de conexão, HTTP `408`, `429` e `5xx`.
 - Não repetir automaticamente erros funcionais `400`, `401`, `403` ou `404`, salvo contrato explícito diferente.
-- Em `401` recebido do Graph, permitir no máximo uma nova obtenção de token e uma repetição da requisição que falhou. Evitar loop infinito.
+- Em `401` recebido do Graph, permitir no máximo uma nova obtenção e uma repetição da requisição que falhou. Evitar loop infinito.
 - Caso o ECS indique `REQUIRES_LOGIN`, registrar métrica específica e falhar o item sem expor detalhes sensíveis. O fluxo de reativação do usuário permanece fora do escopo.
 - O mecanismo de autenticação serviço-a-serviço deve ser plugável. Não assumir segredo fixo no código.
 
@@ -289,11 +289,11 @@ Requisitos:
 
 ```http
 GET https://graph.microsoft.com/v1.0/me/messages
-Authorization: Bearer {accessToken}
+Authorization: Bearer {eco}
 Prefer: outlook.body-content-type="text"
 ```
 
-Utilizar `/me/messages` porque o access token é delegado e representa o usuário que está sendo processado.
+Utilizar `/me/messages` porque o ecs é delegado e representa o usuário que está sendo processado.
 
 ### 12.2 Query inicial
 
@@ -314,7 +314,7 @@ Como `receivedDateTime` aparece no `$orderby`, ela deve também aparecer primeir
 
 - Ler `@odata.nextLink` da resposta.
 - Usar a URL completa devolvida pelo Graph na próxima chamada.
-- Não extrair, alterar nem reconstruir `$skip` ou `$skiptoken`.
+- Não extrair, alterar nem reconstruir `$skip` ou `$skipecs`.
 - Continuar até que `@odata.nextLink` esteja ausente ou vazio.
 - Manter o cabeçalho `Authorization` e os demais cabeçalhos necessários em todas as páginas.
 - Impor `GRAPH_MAX_PAGES` como proteção operacional configurável. Se o limite for atingido enquanto ainda existir `nextLink`, falhar sem avançar o checkpoint.
@@ -437,9 +437,9 @@ Criar erros tipados/categorizados internamente:
 | --- | --- | --- |
 | `INVALID_MESSAGE` | JSON inválido, ausência de `userId` | Sim até DLQ, salvo futura quarentena |
 | `LOCKED` | Extração do mesmo usuário em andamento | Sim |
-| `TOKEN_REQUIRES_LOGIN` | Cache/token do usuário inválido | Sim até DLQ e métrica específica |
-| `TOKEN_SERVICE_TRANSIENT` | Timeout, 429, 5xx | Sim |
-| `TOKEN_SERVICE_PERMANENT` | 400, 403, 404 | Sim pelo SQS até DLQ, sem retry HTTP interno |
+| `ecs_REQUIRES_LOGIN` | Cache/ecs do usuário inválido | Sim até DLQ e métrica específica |
+| `ecs_SERVICE_TRANSIENT` | Timeout, 429, 5xx | Sim |
+| `ecs_SERVICE_PERMANENT` | 400, 403, 404 | Sim pelo SQS até DLQ, sem retry HTTP interno |
 | `GRAPH_THROTTLED` | 429 | Sim, respeitando `Retry-After` |
 | `GRAPH_UNAUTHORIZED` | 401 após uma renovação | Sim |
 | `GRAPH_FORBIDDEN` | 403/permissão ausente | Sim até DLQ e alarme |
@@ -449,7 +449,7 @@ Criar erros tipados/categorizados internamente:
 | `CHECKPOINT_FAILED` | Falha no DynamoDB | Sim |
 | `DEADLINE_RISK` | Tempo restante insuficiente | Sim |
 
-Os erros devolvidos e registrados devem ser sanitizados. Nunca incluir token, conteúdo do e-mail ou payload integral do Graph.
+Os erros devolvidos e registrados devem ser sanitizados. Nunca incluir ecs, conteúdo do e-mail ou payload integral do Graph.
 
 ---
 
@@ -491,8 +491,8 @@ Usar JSON e incluir quando aplicável:
 
 Não registrar:
 
-- access token;
-- refresh token;
+- ecs;
+- refresh;
 - cabeçalho `Authorization`;
 - corpo, assunto ou destinatários do e-mail;
 - resposta completa do ECS ou Graph.
@@ -507,7 +507,7 @@ Publicar via Embedded Metric Format ou solução corporativa equivalente:
 - `EmailsExtracted`;
 - `GraphPagesProcessed`;
 - `GraphRequestLatencyMs`;
-- `TokenServiceLatencyMs`;
+- `ecsServiceLatencyMs`;
 - `S3WriteLatencyMs`;
 - `ExtractionDurationMs`;
 - `GraphThrottlingCount`;
@@ -557,9 +557,9 @@ Publicar via Embedded Metric Format ou solução corporativa equivalente:
 | `S3_BUCKET_NAME` | Sim | — | Bucket de destino. |
 | `S3_EMAIL_PREFIX` | Não | `email/` | Prefixo dos objetos. |
 | `S3_KMS_KEY_ID` | Conforme ambiente | — | Chave KMS, se exigida no `PutObject`. |
-| `TOKEN_SERVICE_BASE_URL` | Sim | — | URL interna do ECS. |
-| `TOKEN_SERVICE_PATH` | Não | `/tokens/background` | Caminho configurável. |
-| `TOKEN_SERVICE_TIMEOUT_MS` | Não | `5000` | Timeout do ECS. |
+| `ecs_SERVICE_BASE_URL` | Sim | — | URL interna do ECS. |
+| `ecs_SERVICE_PATH` | Não | `/ecs/background` | Caminho configurável. |
+| `ecs_SERVICE_TIMEOUT_MS` | Não | `5000` | Timeout do ECS. |
 | `GRAPH_BASE_URL` | Não | `https://graph.microsoft.com/v1.0` | Base do Graph. |
 | `GRAPH_PAGE_SIZE` | Não | `100` | Tamanho de página inicial. |
 | `GRAPH_HTTP_TIMEOUT_MS` | Não | `30000` | Timeout por requisição. |
@@ -595,7 +595,7 @@ graph-email-extractor/
 │   │   ├── extraction_window.go
 │   │   └── errors.go
 │   ├── ports/
-│   │   ├── token_provider.go
+│   │   ├── ecs_provider.go
 │   │   ├── email_source.go
 │   │   ├── email_repository.go
 │   │   ├── checkpoint_repository.go
@@ -608,7 +608,7 @@ graph-email-extractor/
 │   │   │       ├── handler.go
 │   │   │       └── message.go
 │   │   └── outbound/
-│   │       ├── tokenservice/
+│   │       ├── ecsservice/
 │   │       │   ├── client.go
 │   │       │   └── models.go
 │   │       ├── graph/
@@ -653,12 +653,12 @@ Se o repositório existente tiver convenções diferentes, manter as convençõe
 Os nomes podem ser ajustados idiomaticamente, mas as responsabilidades devem permanecer claras.
 
 ```go
-type TokenProvider interface {
-    GetAccessToken(ctx context.Context, userID, correlationID string) (AccessToken, error)
+type ecsProvider interface {
+    GetAccessecs(ctx context.Context, userID, correlationID string) (eco, error)
 }
 
 type EmailSource interface {
-    ListEmails(ctx context.Context, accessToken string, window ExtractionWindow) (EmailIterator, error)
+    ListEmails(ctx context.Context, eco string, window ExtractionWindow) (EmailIterator, error)
 }
 
 type EmailRepository interface {
@@ -712,7 +712,7 @@ Implementar testes table-driven para:
 12. Campos opcionais/nulos do Graph.
 13. `429` com `Retry-After`.
 14. `5xx` com backoff limitado.
-15. `401` obtendo novo token apenas uma vez.
+15. `401` obtendo novo ecs apenas uma vez.
 16. `403` sem retry HTTP interno.
 17. Falha no ECS sem chamada ao Graph.
 18. Falha no S3 sem atualização do checkpoint.
@@ -726,7 +726,7 @@ Implementar testes table-driven para:
 26. Tempo restante insuficiente.
 27. Resposta parcial do lote SQS contendo somente IDs com falha.
 28. Dois usuários no mesmo lote: um sucesso e uma falha.
-29. Sanitização de token e dados sensíveis nos erros/logs.
+29. Sanitização de ecs e dados sensíveis nos erros/logs.
 30. Bloqueio de `nextLink` com host não permitido.
 
 Usar fakes/mocks pelas portas, sem acessar serviços reais nos testes unitários.
@@ -793,8 +793,8 @@ O desenvolvimento será aceito quando:
 
 - [ ] A Lambda receber e validar um evento SQS realista.
 - [ ] A Lambda usar resposta parcial de lote.
-- [ ] O token for obtido do ECS pelo `userId`.
-- [ ] O token não aparecer em logs nem persistência.
+- [ ] O ecs for obtido do ECS pelo `userId`.
+- [ ] O ecs não aparecer em logs nem persistência.
 - [ ] A primeira carga consultar os 365 dias anteriores ao `extractionEndTime`.
 - [ ] Cargas posteriores usarem o checkpoint com overlap.
 - [ ] O Graph for consultado usando filtro por `receivedDateTime`.
@@ -832,7 +832,7 @@ O desenvolvimento será aceito quando:
 
 O Claude Code deve deixar estes itens configuráveis e registrar `TODO: ENVIRONMENT_DECISION` onde não houver resposta no repositório:
 
-1. URL e contrato real do ECS de tokens.
+1. URL e contrato real do ECS.
 2. Autenticação serviço-a-serviço com o ECS.
 3. Nome real da fila, DLQ, tabela e bucket.
 4. Se o bucket já existe e qual chave KMS utilizar.
@@ -865,7 +865,7 @@ domain/transcript.go                         # futuro
 O extrator futuro poderá compartilhar:
 
 - handler SQS ou roteamento por `resourceType`;
-- `TokenProvider`;
+- `ecsProvider`;
 - checkpoint e lock;
 - cliente HTTP base;
 - retry;
