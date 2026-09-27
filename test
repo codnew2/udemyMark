@@ -1,0 +1,28 @@
+Slide 1 - Nesta, minha atuação ficou concentrada em pecas de duas frentes: a construção do fluxo inicial de acesso e consentimento e a estruturação do processamento assíncrono para extração de e-mails e transcrições pelo Microsoft Graph.
+Vou mostrar o que foi desenvolvido, como os componentes se conectam e quais resultados já conseguimos validar. 
+
+
+Slide 2 - Minha atuação foi dividida nessas duas frentes. Na primeira, trabalhei para viabilizar o acesso autenticado e o gerenciamento do consentimento na construção do fluxo ali do front, gateway e do ecs bff com o serviço de consentimento. 
+Na segunda, estruturei o fluxo assíncrono responsável por extrair, organizar e armazenar os dados de emails e transcrições do Microsoft Graph.
+
+Slide 3 - Esta é a visão geral da arquitetura. Os componentes destacados em laranja representam o escopo em que atuamos. Na frente de consentimento, trabalhamos no caminho entre o frontend, o Gateway, o BFF e o serviço de autorização e consentimento. 
+Na frente de extração, atuamos no fluxo formado pela fila SQS, pelo Lambdas de processamento, pela integração com o Microsoft Graph e pelo armazenamento no S3. Não vou detalhar toda a arquitetura, apenas os pontos ligados às entregas demonstradas hoje.
+
+Slide 4 - Para que o fluxo funcionasse, não bastava implementar as rotas. Primeiro foi necessário viabilizar a aplicação no processo corporativo, configurar a autenticação no Azure AD e associar os escopos necessários ao Client ID do Ch.
+A partir disso, validamos a propagação do token desde o frontend até o backend, permitindo que as rotas de consentimento fossem chamadas dentro de um contexto autenticado. Ao mostrar os prints, destaque a autorização, a configuração e o resultado de cada etapa.
+
+Slide 5 - Com a jornada de autenticação estabelecida, implementamos no BFF a integração das três operações necessárias para o gerenciamento do consentimento. O GET consulta o estado atual, o POST recebe os dados pelo body e registra o consentimento, 
+e o DELETE utiliza o identificador para realizar a remoção. 
+
+Slide 6 - Segunda frente foi a extracao assíncrona via microsoft graph api
+
+Na segunda frente, estruturamos o processamento assíncrono das extrações. A fila recebe a solicitação e desacopla o pedido do processamento. A Lambda consome a mensagem, realiza as consultas ao Microsoft Graph e armazena os resultados no S3. 
+Também estruturamos a separação das pastas e os formatos iniciais dos JSONs de e-mails e transcrições. Na demo, mostre uma execução concreta: mensagem na fila, Lambda processando, chamada ao Graph e arquivo criado no S3.
+
+Slide 7 - Durante parte do desenvolvimento, a base de dados de consentimento e a definição final dos campos do contrato ainda não estavam disponíveis. Para não bloquear a evolução, utilizamos mocks para construir e validar a integração entre frontend, 
+Gateway e BFF. Agora que a base de dados do consentimento e os campos estão sendo disponibilizados, a próxima etapa concentra-se na substituição dos mocks, no mapeamento definitivo e na validação com carga real.
+
+Slide 8 - Nesta sprint, avançamos em duas frentes complementares. Na primeira, estruturamos a jornada de autenticação e consentimento, desde as configurações até a integração do frontend com o Gateway, 
+o BFF e o serviço de consentimento. Na segunda, estruturamos o processamento assíncrono para extração de e-mails e transcrições, utilizando SQS FIFO, Lambda, Microsoft Graph
+e S3. Mesmo com a base definitiva e os contratos ainda em definição, utilizamos mocks para validar as integrações sem bloquear o projeto. Como resultado, 
+os principais fluxos técnicos estão integrados e funcionando. O próximo passo é substituir os dados simulados pelos dados reais sobre essa fundação já construída.
