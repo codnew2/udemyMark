@@ -1,0 +1,42 @@
+“Bom dia, pessoal. Nesta sprint atuei em algumas atividades. Hoje vou apresentar uma delas: o motor de renovação de token para acesso ao Microsoft Graph. Ele permite que o backend consulte os dados em nome do officer e execute a extração em background, mesmo com o CRM fechado. Vou mostrar o problema que motivou essa entrega, como o fluxo funciona e, no final, uma execução real.”
+
+
+1. Abertura — O CRM pode fechar. A coleta não precisa parar.
+“A demanda parte de uma pergunta: quando o officer fecha o CRM, a coleta de dados também precisa parar? O objetivo deste trabalho foi permitir que uma extração iniciada continue no backend, mesmo sem a tela aberta, e deixe os dados prontos para as próximas etapas.”
+Transição: “Para entender a solução, primeiro vamos olhar o que acontecia sem esse fluxo.”
+
+2. O problema que motivou essa entrega — Como buscar dados quando o officer não está no CRM?
+“Com o officer no CRM, a aplicação consegue iniciar uma consulta autorizada ao Graph. Quando ele sai, essa sessão deixa de estar disponível para o processamento. Sem uma autorização delegada que o backend possa recuperar com segurança, ele não consegue iniciar novas consultas em nome daquele officer. A extração para e os dados podem ficar desatualizados.”
+Aponte para os dois lados do slide: sessão ativa e sessão encerrada.
+Transição: “A solução precisa manter a autorização do officer utilizável pelo backend, sem depender da sessão do navegador.”
+
+3. Como o fluxo funciona — Uma autorização prepara o acesso para depois
+“O fluxo tem dois momentos. No primeiro, o officer entra e autoriza o acesso. A aplicação faz a primeira troca OBO — On-Behalf-Of, ou ‘em nome de’ — e protege o token antes de salvá-lo no DynamoDB. Esse token guardado ainda não é o access token final usado para consultar o Graph. Ele prepara a etapa que virá depois.”
+Você pode explicar a ideia em linguagem simples: “É como um assistente autorizado a agir em nome do officer, sem usar a senha dele nem uma identidade genérica.”
+Transição: “Depois que essa preparação foi feita, o CRM pode ser fechado. A extração acontece em outro momento.”
+
+Quando o officer fecha o CRM, o processamento em background não pode depender do token que veio da sessão do front. A demanda foi criar um ciclo seguro para esse token: guardá-lo criptografado no DynamoDB e, quando a extração rodar, recuperá-lo, descriptografá-lo e fazer uma nova troca OBO para obter o access token do Graph. Sem esse mecanismo, o backend não consegue fazer a consulta depois que o CRM fecha. 
+
+
+4. Background — CRM fechado. O backend continua trabalhando.
+“Quando o processamento é disparado, o backend busca no DynamoDB o token protegido e o descriptografa. Em seguida, faz a segunda troca OBO para obter um access token destinado ao Graph. Só então consulta os dados e salva a extração. O officer não precisa manter o CRM aberto durante essas etapas.”
+“Isso depende de a autorização continuar válida. Se for necessária uma nova interação do usuário, o fluxo precisa pedir que ele autentique novamente.”
+Transição: “O que essa execução muda para o produto?”
+
+5. Valor entregue
+“A coleta iniciada não fica limitada ao tempo em que o officer mantém o CRM aberto. O resultado é salvo para o sistema consumir depois e pode abastecer etapas como a timeline e a geração de insights. O OBO viabiliza a consulta autorizada aos dados; a geração dos insights é uma etapa posterior do pipeline.”
+Transição: “Agora vou mostrar a trilha dessa execução no ambiente real.”
+
+6. Demonstração real
+“Aqui o officer já está fora do CRM. Vou acompanhar o processamento: primeiro, o backend recupera o registro criptografado; depois, descriptografa o token e faz a segunda troca OBO. Com o access token do Graph, consulta os dados e persiste o resultado.”
+Enquanto demonstra, indique cada evidência na tela: registro criptografado → segunda troca OBO → resposta do Graph → resultado salvo. Evite exibir tokens em claro ou dados pessoais.
+Fechamento:
+“Então, mesmo com o CRM fechado, o backend conseguiu consultar o Graph em nome do officer e salvar os dados para as próximas etapas.”
+
+
+
+————
+
+Se vcs verem meu token foi armazenado na base de dados do dia 21 
+
+Então sem esse motor de renovacao de token, esse valor que esta armazenado na base de dados ja nao serviria mais pra nada, pois o access token obtido ele ja esta expirado
