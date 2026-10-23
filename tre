@@ -37,6 +37,6 @@ Fechamento:
 
 ————
 
-Se vcs verem meu token foi armazenado na base de dados do dia 21 
+
 
 Então sem esse motor de renovacao de token, esse valor que esta armazenado na base de dados ja nao serviria mais pra nada, pois o access token obtido ele ja esta expirado
