@@ -34,3 +34,11 @@ Correlacionar e reconciliar fatos de diferentes canais, preservando o histórico
 
 EXEMPLOS DE RESUMOS
 
+4. A IA deve utilizar o resumo anterior ou os e-mails originais?
+Aqui eu faria uma escolha importante.
+
+Não recomendo que a IA utilize exclusivamente o resumo anterior + o novo e-mail.
+
+Isso pode causar um problema conhecido como propagação de erros: se o primeiro resumo estiver incorreto, os próximos poderão repetir e ampliar o erro.
+
+Ou seja, a IA recebe o resumo consolidado para compreender rapidamente o contexto, mas consulta as fontes originais relevantes para confirmar as informações que serão mantidas ou alteradas.
