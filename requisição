@@ -1,0 +1,36 @@
+Sistema CRM Agêntico
+1. Requisitos Funcionais (O que o sistema FAZ)
+- Receber interações: Consumir e-mails e transcrições de reuniões coletados para cada officer e cliente.
+- Suportar novos canais: Permitir futuramente o processamento de WhatsApp, call reports e outras fontes.
+- Extrair fatos: Identificar automaticamente solicitações, decisões, compromissos, riscos, oportunidades, produtos e informações relevantes.
+- Identificar o cliente: Associar cada fato ao cliente correto, por exemplo, Magazine Luiza.
+- Identificar assuntos: Agrupar fatos relacionados ao mesmo contexto, como uma operação, proposta, produto, documento ou negociação.
+- Correlacionar informações: Verificar se um novo fato está relacionado a algo identificado anteriormente, mesmo que tenha vindo de outro canal.
+- Reconciliar informações: Identificar quando um novo fato confirma, altera, conclui, cancela ou contradiz uma informação anterior.
+- Gerenciar pendências: Criar e atualizar pendências com estados como ABERTA, CONCLUÍDA, CANCELADA ou SUBSTITUÍDA.
+- Gerar timeline: Organizar cronologicamente os acontecimentos relevantes do relacionamento com o cliente.
+- Gerar memória do cliente: Consolidar a situação atual do cliente, incluindo assuntos em andamento, fatos importantes, produtos, riscos, oportunidades e pendências.
+- Consultar histórico: Permitir perguntas por assunto ou período, como: “O que aconteceu com a Magazine Luiza em março?”.
+- Manter evidências: Relacionar timeline, pendências e memória aos e-mails, reuniões ou mensagens que deram origem às informações.
+
+2. Requisitos Não Funcionais (Como o sistema se COMPORTA)
+
+- Confiabilidade: O sistema não pode perder fatos extraídos nem apagar o histórico quando uma informação for atualizada.
+- Rastreabilidade: Toda informação gerada pela IA deve possuir referência para o canal e conteúdo de origem.
+- Consistência: Informações novas devem atualizar o estado atual sem apagar os acontecimentos anteriores.
+- Idempotência: O mesmo e-mail ou transcrição não pode gerar fatos, pendências ou eventos duplicados quando for processado novamente.
+- Escalabilidade: O sistema deve processar interações de aproximadamente 1.800 usuarios e suportar o crescimento do volume e dos canais.
+- Extensibilidade: Novos canais devem ser adicionados sem exigir mudanças significativas na lógica central de fatos, timeline, pendências e memória.
+- Segurança: Os dados dos clientes devem ser protegidos durante o processamento, armazenamento e consulta.
+- Privacidade: Cada officer deve acessar somente clientes e informações para os quais possui autorização.
+- Auditabilidade: Deve ser possível explicar por que uma pendência foi criada, atualizada, concluída ou cancelada.
+- Qualidade da IA: Toda correlação deve possuir nível de confiança; casos de baixa confiança não devem atualizar automaticamente informações importantes.
+- Disponibilidade: Falhas temporárias na IA ou em um canal não podem causar perda das interações já recebidas.
+- Observabilidade: O sistema deve registrar erros, tempo de processamento, fatos extraídos, correlações realizadas e decisões da IA.
+- Processamento assíncrono: A extração e a consolidação podem ocorrer em segundo plano, sem bloquear a coleta das interações.
+O requisito mais importante desse sistema provavelmente será:
+Correlacionar e reconciliar fatos de diferentes canais, preservando o histórico e mantendo uma visão atualizada do cliente.
+
+
+EXEMPLOS DE RESUMOS
+
