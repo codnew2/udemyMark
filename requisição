@@ -42,3 +42,15 @@ Não recomendo que a IA utilize exclusivamente o resumo anterior + o novo e-mail
 Isso pode causar um problema conhecido como propagação de erros: se o primeiro resumo estiver incorreto, os próximos poderão repetir e ampliar o erro.
 
 Ou seja, a IA recebe o resumo consolidado para compreender rapidamente o contexto, mas consulta as fontes originais relevantes para confirmar as informações que serão mantidas ou alteradas.
+
+
+--------
+
+
+2. O que exatamente a IA recebe?
+Quando chega o E-mail 2, o serviço no ECS recupera:
+- A situacaoAtual anterior, com o contexto consolidado.
+- O conteúdo original do E-mail 2.
+- Os e-mails e transcrições anteriores relevantes, para conferir as informações que serão mantidas ou modificadas.
+A IA recebe uma instrução semelhante a esta:
+Analise a situação consolidada anterior e a nova interação. Identifique quais informações permanecem válidas, quais foram alteradas, quais foram contraditas e quais são novas. Produza uma situação atual consolidada, preservando o contexto histórico necessário para compreender a evolução do assunto. Não apresente informações antigas como se ainda fossem válidas. Sustente as afirmações nas fontes fornecidas.
