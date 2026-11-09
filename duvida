@@ -1,0 +1,75 @@
+
+Esse é o projeto de consultar e atualizar saldo
+
+
+Então ao invés de ter um único serviço pra atualizar e consultar saldo, usei a arquitetura CQRS pra separar as responsabilidades que sao usando o comnand pra escrita e queries pra leitura
+
+Aqui tbm usando o teorema cap optei pela consistencia ao inves da disponibilidade
+
+
+O projeto aq tbm separei por 5 camadas a de entrada e proteção 
+
+
+Então aqui o primeiro fluxo é o de entrada e proteção
+Onde add tem um waf e o gateway. O Waf ele foi adicionado justamente pra tentar bloquear requsiicoes maliciosas, devido a criticidade de ser um sistema financeiro 
+E ai ele deixa a reuisicao ou nao passar pro gateway
+
+Passando pro Gateway ele segue a requisição para o fluxo de escrita ou leitura 
+
+ 
+Então vamos começar pelo fluxo de escrita
+Vamos começar usando um exemplo de um pix de 30 ,
+Então ele faz a requisição , a Command API aceita o pedido e o coloca numa SQS FIFO, com ordem por conta.”
+O Command Worker consome a fila e valida o saldo no RDS e ai ele só deixa seguir se o saldo for >= valor do pix 
+
+Se tiver tudo ok 
+Nessa msm transação ele usa o ACID do RDS (fazendo o tradeoff o Rds foi o escolhido justamente por causa dessa funucionalidade do ACID que ele ja vem com isso por padrão) 
+Garantindo as operações de uma transação: que referente a sigla ACID é Atomicidade (tudo ou nada), Consistência (as regras são respeitadas, como o saldo nunca ficar negativo), Isolamento (operações simultâneas não se atrapalham) e Durabilidade (o que foi confirmado não se perde). O PostgreSQL ja vem com esse padrão ACID 
+
+Na mesma transação ACID, grava o lançamento no ledger e o evento na outbox. 
+
+O ledger ele guarda o historico de cada movimentacao. O outbox garante que o resto do sistema, como o cache de saldo, fique sabendo do PIX.
+Então é ate um partner geralmente usado pra esse tipo de transação em banco de dados 
+
+Então eles Garantem que um PIX nunca fique pela metade e que o aviso dele nunca se perca.
+
+E após esse processo ele grava o mesmo dado em uma replica de leitura do RDS
+
+FLUXO DE Sincronização
+
+1. O DMS lê o log do PostgreSQL e publica o evento da outbox no Kafka, particionado pelo ID da conta.
+* O Worker de sincronização consome o evento e atualiza o ElastiCache (saldo)
+* Eventos que falham vão para a DLQ, e o CloudWatch dispara alarmes de falha e de atraso.
+
+
+Fluxo 4: Leitura
+
+1. A Query API lê o saldo do ElastiCache e o extrato da replica.
+2. Em caso de cache miss, ou logo após uma escrita da mesma conta, ela lê do RDS primário e faz o cache aside para atualizar o elástic cache com o novo valor 
+
+
+ Tradeoff de cada serviço
+
+Serviço	Por que escolhi	Custo
+API Gateway + WAF	 -------  Autenticação, TLS e rate limit num ponto só	Latência extra e mais um serviço
+Lambda	------   Escala sozinha, sem servidor para gerenciar	Cold start; muitas conexões no banco (precisa de RDS Proxy)
+SQS FIFO --------	Absorve picos e mantém a ordem por conta	Resposta assíncrona: o cliente recebe “aceito”, não “concluído”
+RDS PostgreSQL--------	ACID e ledger auditável; é a fonte da verdade	Um único ponto de escrita; escala vertical
+Outbox + DMS--------	Não perde evento, sem precisar de transação distribuída	Latência de segundos; entrega “ao menos uma vez”
+Kafka (MSK) -------	Ordem por conta, replay e vários consumidores	Custo e operação maiores
+ElastiCache	 --------- Saldo em milissegundos	É um dado derivado e pode ficar velho
+
+
+
+
+
+
+Resposta curta para o especialista
+“Garantem que um PIX nunca fique pela metade e que o aviso dele nunca se perca. O ACID faz o PIX acontecer inteiro ou não acontecer. O ledger guarda o histórico auditável de cada movimentação. A outbox garante que o resto do sistema, como o cache de saldo, fique sabendo do PIX.”
+Se ele pedir um pouco mais, dê um exemplo do que acontece sem cada um:
+* Sem ACID: o débito poderia ser gravado sem o crédito, e o dinheiro sumiria.
+* Sem ledger: você não consegue auditar nem reconstruir o saldo.
+* Sem outbox: o PIX é gravado, o sistema cai antes de avisar, e o cache mostra o saldo antigo sem ninguém perceber.
+
+
+
