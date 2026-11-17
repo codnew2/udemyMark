@@ -125,13 +125,13 @@ Isso exigiu atenção especial às questões de segurança, consentimento e auto
 
 Minha atuação esteve concentrada principalmente na construção das integrações e na definição de como obter e utilizar as autorizações dos usuários de maneira segura.
 
-Atualmente, a solução está em validação, com previsão de atender aproximadamente 1.800 officers.
+Atualmente, a solução está em validação, com previsão de atender aproximadamente 1.800 of.
 O impacto esperado é transformar um conhecimento que hoje fica concentrado nas pessoas em uma memória institucional, permitindo maior continuidade no relacionamento com os clientes.
 
 Disseminação de boas práticas além da squad
 Pergunta: "Conte uma boa prática que você disseminou
 
-Um exemplo foi uma solução que desenvolvi para padronizar a disponibilização de dados do CRM iBBA 360.
+Um exemplo foi uma solução que desenvolvi para padronizar a disponibilização de dados do CRM ib 360.
 
 Anteriormente, existiam 56 jobs do AWS Glue, sendo um para cada objeto. Cada implementação tinha suas particularidades, o que aumentava o esforço de manutenção e dificultava a evolução da solução.
 
@@ -161,7 +161,7 @@ Além disso, houve interação com um superintendente para obter o de acordo nec
 Cada uma dessas interações exigia uma abordagem diferente, porque as preocupações não eram as mesmas.
 O desafio não era apenas desenvolver a integração, mas também garantir que a solução avançasse respeitando os requisitos técnicos e os processos de governança da instituição.
 
-Atualmente, o projeto está em validação, com previsão de atender aproximadamente 1.800 officers.
+Atualmente, o projeto está em validação, com previsão de atender aproximadamente 1.800 of.
 
 Essa experiência reforçou para mim a importância de compreender as necessidades de cada stakeholder e conectar as decisões técnicas aos requisitos de segurança, governança e negócio.
 
@@ -197,7 +197,7 @@ A ideia foi separar as regras de cada objeto da implementação técnica. Para i
 
 Com essa abordagem, substituímos os 56 jobs por uma única implementação reutilizável, mantendo execuções independentes para cada objeto.
 
-O principal resultado foi que essa solução passou a ser utilizada pela RT na democratização de todos os objetos do iBBA 360.
+O principal resultado foi que essa solução passou a ser utilizada pela RT na democratização de todos os objetos do iB 360.
 
 Além de reduzir a complexidade da sustentação, conseguimos estabelecer um padrão reutilizável. Antes, disponibilizar um novo objeto exigia criar repositório e desenvolver código específico. Com a nova abordagem, basta configurar o mapeamento em YAML, e o processo passou a levar aproximadamente um dia.
 
