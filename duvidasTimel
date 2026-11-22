@@ -1,0 +1,57 @@
+
+
+DUVIDAS SOBRE O FLUXO:
+
+Ele pega todos os registros do officer 
+Depois agrupa por grupos, e por exemplo se tem 10 grupos ele faz um for grupo por grupo daquele user
+Depois agrupa por threads, depois com todos os registro daquele grupo ele agrupa por threads
+As threads e as fichas sao separadas em ordem cronológica?
+
+- A timeline gera em cima de onde?
+
+————
+
+FAZER: 
+1- Fazer um filtro no dynamodb com o grupo x da yamsin
+Add filtro isMatch true, e o codigo do grupo
+Ver qtos registros retornaram 
+Depois baixar todos os assuntos e ver quais thread foram usadas para gerar os assuntos , por exemplo 
+Esse assunto usou 5 thread  o outro 3
+Pra depois somar e ver se ele usou todas que estavam na base de dados 
+Se bateu o numero deu certo, se nao deu algo errado
+Por exemplo 5 thread no banco de dados mas usou só 3 
+
+
+2 - Ver qual foi o select pra baixar os callReports
+
+3 - ver o que seria interessante levar dos jsons gerados para a base de dados 
+
+
+——————
+
+ANALISAR:
+
+Preciso ver se a interação que ta entrando pertence a algum assunto do grupo ou é de um assunto novo
+
+Pensei em salvar as fichas das threads que ja foram geradas pra quando na execucao delta ele conseguir analisar se 
+esse nova interação tem relação com alguma ficha
+
+Então primeiro, ele olha se pertence ha alguma thread , se sim ele atualiza o assunto 
+Senão ele gera uma ficha e ve com as outras fichas do grupo ele se relaciona em algum assunto 
+
+
+BASE DE DADOS: 
+- ver geração dos dados e ver o que faz sentido levar para o dynamod e como estruturar, quais tabelas fazem sentido criar 
+
+ECS
+- Ver de fazer tudo em um só , mas ai ver com Lucas de mudar o nome
+
+ESTARTEGIA
+- Pensei em estruturar as bases de dados que seria legal ter e como deveria ter
+- Mostrar logica dos dados 
+- Ter um documento de como seria e chamar o Lucas pra uma reunião 
+
+
+LUCAS
+
+- Falar separar em duas (a parte de fazer os agentes e a parte de performance) 
