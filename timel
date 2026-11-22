@@ -1,0 +1,30 @@
+Esta funcionando legal desse jeito, só que tem um ponto. Essa geracao de insights é a primeira extracao , do qual pega registros do banco de dados do ano todo 
+
+Porem apos essa primeira geracao, depois vai continuar tendo chegando interacoes , por exemplo, vamos extrair dados do ofli de 3h em 3h, e essas 3h qdo for extrair pode ser que tenha novos dados de algum canal de interacao 
+
+essa é a geração inicial dos insights mas agora precisa transformar esse processamento em um fluxo incremental, sem reprocessar um ano inteiro de interações a cada nova carga. Não quero precisar reprocessar todo o grupo do zero a cada nova interação, pois isso gera custos desnecessários. Quando a interação trata de apenas um assunto específico, não faz sentido reanalisar os demais. Além disso, reprocessar tudo acaba alterando itens como assuntos, resumo executivo e timeline — por exemplo, mudando um resumo executivo mesmo sem nenhuma novidade relevante —, o que gera inconsistências e variações desnecessárias nos resultados.
+
+Entao preciso garantir que a cada nova interação que chegar, consiga atualizar, complementar, criar, concluir ou até contradizer um assunto existente, mantendo o resumo executivo e a timeline coerentes.
+
+Voce entendeu?
+
+entao por exemplo:
+- verificar se a interacao é nova ou faz parte de alguma thread do grupo
+- identificar se a nova interacao afeta algum assunto
+- procurar assuntos do mesmo grupo que possam estar relacionado a nova interacao
+- persistencia: atualizar somente os assuntos impactados preserverando o historico e as referencias
+
+e por exemplo: nem toda nova interacao precisa alterar todos os insights
+
+Exemplos:
+Nova interação	                                                     Atualização necessária
+Cliente confirma uma reunião já agendada	             Registrar evidência; possivelmente nenhuma alteração no resumo executivo
+Cliente cancela aquisição de fábrica	                    Atualizar assunto, timeline e resumo executivo
+Cliente inicia negociação de novo produto	            Criar assunto e atualizar os insights pertinentes
+E-mail duplicado ou sem informação relevante	    Não executar nova geração de insights
+
+lembrando que de 3h em 3h pode vim mais de uma interacao e ai tem que ver se precisaria fazer o agrupamento de threads
+e tbm vale lembrar que de sempre ordenar na ordem cronologica
+Por que por exemplo nesse carga delta pode vim dezenas de interacoes durante as 3h assim como pode nao vim nenhuma
+
+E então queria sua ajuda, pra analisar e ver como poderia fazer com essa carga delta. Como poderia trabalhar com ela pra continuar gerando insights do grupo, mas qual seria a melhor maneira pra ter o fluxo correto e nao gastar com modelo de ia desnecessariamente. Mas sem perder a qualidade dos insights.
