@@ -2,7 +2,7 @@
 
 DUVIDAS SOBRE O FLUXO:
 
-Ele pega todos os registros do officer 
+Ele pega todos os registros do use 
 Depois agrupa por grupos, e por exemplo se tem 10 grupos ele faz um for grupo por grupo daquele user
 Depois agrupa por threads, depois com todos os registro daquele grupo ele agrupa por threads
 As threads e as fichas sao separadas em ordem cronológica?
